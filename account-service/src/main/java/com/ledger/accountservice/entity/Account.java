@@ -39,6 +39,9 @@ public class Account {
     @OneToMany(mappedBy = "account", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
     private List<Transaction> transactions;
 
+    @Column(name = "last_event_timestamp")
+    private LocalDateTime lastEventTimestamp;
+
     @PrePersist
     protected void onCreate() {
         if (createdAt == null) {
