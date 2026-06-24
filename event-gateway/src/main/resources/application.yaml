@@ -47,14 +47,27 @@ springdoc:
     path: /v3/api-docs
   show-actuator: true
 
-account-service:
-  url: http://localhost:8081/api
-  timeout-ms: 5000
-  retry-attempts: 3
-  retry-delay-ms: 1000
 
 security:
+  # Resource Server (incoming JWT validation from Event Gateway clients)
   oauth2:
     resourceserver:
       jwt:
-        issuer-uri: https://accounts.google.com
+        issuer-uri: ${OKTA_ISSUER_URI:https://your-tenant.okta.com}
+        jwk-set-uri: ${OKTA_ISSUER_URI:https://your-tenant.okta.com}/v1/keys
+
+    # OAuth2 Client (Event Gateway calling Account Service)
+    client:
+      registration:
+        account-service-client:
+          client-id: ${ACCOUNT_SERVICE_CLIENT_ID}
+          client-secret: ${ACCOUNT_SERVICE_CLIENT_SECRET}
+          authorization-grant-type: client_credentials
+          scope: read,write
+      provider:
+        okta:
+          token-uri: ${OKTA_ISSUER_URI:https://your-tenant.okta.com}/v1/token
+
+oauth2:
+account-service:
+  client-id: account-service-client
