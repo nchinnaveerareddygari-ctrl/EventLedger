@@ -1,0 +1,396 @@
+openapi: 3.0.0
+info:
+  title: Account Service API
+  description: Internal microservice for managing account state, balances, and transaction history
+  version: 1.0.0
+  contact:
+    name: Engineering Team
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:8081
+    description: Local development server
+
+tags:
+  - name: Accounts
+    description: Account operations and queries
+  - name: Transactions
+    description: Transaction processing
+  - name: Health
+    description: Service health and diagnostics
+
+paths:
+  /health:
+    get:
+      tags:
+        - Health
+      summary: Health check endpoint
+      description: Returns the health status of the Account Service and its dependencies
+      operationId: getHealth
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+        '503':
+          description: Service is unhealthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /accounts/{accountId}:
+    get:
+      tags:
+        - Accounts
+      summary: Get account details
+      description: Retrieves account information including current balance and recent transactions
+      operationId: getAccount
+      parameters:
+        - name: accountId
+          in: path
+          required: true
+          description: The unique account identifier
+          schema:
+            type: string
+          example: "acct-123"
+      responses:
+        '200':
+          description: Account found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountDetails'
+        '404':
+          description: Account not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /accounts/{accountId}/balance:
+    get:
+      tags:
+        - Accounts
+      summary: Get current account balance
+      description: Returns the current balance for an account (sum of credits minus debits)
+      operationId: getAccountBalance
+      parameters:
+        - name: accountId
+          in: path
+          required: true
+          description: The unique account identifier
+          schema:
+            type: string
+          example: "acct-123"
+      responses:
+        '200':
+          description: Balance retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BalanceResponse'
+        '404':
+          description: Account not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /accounts/{accountId}/transactions:
+    post:
+      tags:
+        - Transactions
+      summary: Apply a transaction to an account
+      description: Processes a debit or credit transaction and updates the account balance. Idempotent based on eventId.
+      operationId: applyTransaction
+      parameters:
+        - name: accountId
+          in: path
+          required: true
+          description: The unique account identifier
+          schema:
+            type: string
+          example: "acct-123"
+        - name: X-Trace-ID
+          in: header
+          required: false
+          description: Distributed trace ID for request correlation
+          schema:
+            type: string
+          example: "trace-abc123def456"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TransactionRequest'
+      responses:
+        '200':
+          description: Transaction applied successfully (idempotent, this is a duplicate or new)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransactionResponse'
+        '201':
+          description: Transaction created successfully (new transaction)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransactionResponse'
+        '400':
+          description: Invalid transaction data (missing fields, invalid type, negative amount, etc.)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Account not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Conflict - EventId already exists for a different transaction
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  schemas:
+    HealthResponse:
+      type: object
+      required:
+        - status
+        - timestamp
+        - service
+      properties:
+        status:
+          type: string
+          enum: [UP, DOWN]
+          description: Overall service health status
+          example: UP
+        timestamp:
+          type: string
+          format: date-time
+          description: ISO 8601 timestamp of the health check
+          example: "2026-06-24T10:30:45Z"
+        service:
+          type: string
+          description: Service name
+          example: "account-service"
+        checks:
+          type: object
+          description: Health status of individual components
+          additionalProperties:
+            type: string
+            enum: [UP, DOWN]
+          example:
+            database: UP
+            connectivity: UP
+
+    Transaction:
+      type: object
+      required:
+        - eventId
+        - accountId
+        - type
+        - amount
+        - currency
+        - eventTimestamp
+      properties:
+        eventId:
+          type: string
+          description: Unique event identifier
+          example: "evt-001"
+        accountId:
+          type: string
+          description: Account identifier
+          example: "acct-123"
+        type:
+          type: string
+          enum: [CREDIT, DEBIT]
+          description: Transaction type
+          example: CREDIT
+        amount:
+          type: number
+          format: double
+          description: Transaction amount (must be > 0)
+          example: 150.00
+          minimum: 0
+          exclusiveMinimum: true
+        currency:
+          type: string
+          description: ISO 4217 currency code
+          example: "USD"
+        eventTimestamp:
+          type: string
+          format: date-time
+          description: ISO 8601 timestamp when the event originally occurred
+          example: "2026-05-15T14:02:11Z"
+        metadata:
+          type: object
+          description: Optional metadata about the transaction
+          additionalProperties: true
+          example:
+            source: "mainframe-batch"
+            batchId: "B-9042"
+
+    TransactionRequest:
+      allOf:
+        - $ref: '#/components/schemas/Transaction'
+      description: Request payload for applying a transaction
+
+    TransactionResponse:
+      allOf:
+        - $ref: '#/components/schemas/Transaction'
+      properties:
+        id:
+          type: string
+          description: Internal transaction ID (database primary key)
+          example: "txn-uuid-001"
+        createdAt:
+          type: string
+          format: date-time
+          description: When the transaction was recorded in the system
+          example: "2026-06-24T10:30:45Z"
+        status:
+          type: string
+          enum: [APPLIED, DUPLICATE]
+          description: Whether this is a new transaction or a duplicate submission
+          example: APPLIED
+      required:
+        - id
+        - createdAt
+        - status
+
+    BalanceResponse:
+      type: object
+      required:
+        - accountId
+        - balance
+        - currency
+        - calculatedAt
+      properties:
+        accountId:
+          type: string
+          description: Account identifier
+          example: "acct-123"
+        balance:
+          type: number
+          format: double
+          description: Net balance (sum of credits minus debits)
+          example: 500.00
+        currency:
+          type: string
+          description: ISO 4217 currency code
+          example: "USD"
+        calculatedAt:
+          type: string
+          format: date-time
+          description: When the balance was calculated
+          example: "2026-06-24T10:30:45Z"
+
+    AccountDetails:
+      type: object
+      required:
+        - accountId
+        - balance
+        - currency
+        - transactionCount
+        - createdAt
+      properties:
+        accountId:
+          type: string
+          description: Account identifier
+          example: "acct-123"
+        balance:
+          type: number
+          format: double
+          description: Current net balance
+          example: 500.00
+        currency:
+          type: string
+          description: ISO 4217 currency code (defaults to USD)
+          example: "USD"
+        transactionCount:
+          type: integer
+          description: Total number of transactions on this account
+          example: 42
+        createdAt:
+          type: string
+          format: date-time
+          description: When the account was created
+          example: "2026-01-15T08:00:00Z"
+        updatedAt:
+          type: string
+          format: date-time
+          description: When the account was last updated
+          example: "2026-06-24T10:30:45Z"
+        recentTransactions:
+          type: array
+          description: Most recent transactions (up to 10, ordered by eventTimestamp descending)
+          maxItems: 10
+          items:
+            $ref: '#/components/schemas/TransactionResponse'
+
+    ErrorResponse:
+      type: object
+      required:
+        - error
+        - message
+        - timestamp
+      properties:
+        error:
+          type: string
+          description: Error code or type
+          example: "VALIDATION_ERROR"
+        message:
+          type: string
+          description: Human-readable error message
+          example: "Amount must be greater than 0"
+        timestamp:
+          type: string
+          format: date-time
+          description: When the error occurred
+          example: "2026-06-24T10:30:45Z"
+        traceId:
+          type: string
+          description: Distributed trace ID for debugging
+          example: "trace-abc123def456"
+        details:
+          type: object
+          description: Additional error details
+          additionalProperties: true
+          example:
+            field: "amount"
+            value: "-50.00"
+
+  headers:
+    X-Trace-ID:
+      description: Distributed trace ID for request correlation
+      schema:
+        type: string
+      example: "trace-abc123def456"
