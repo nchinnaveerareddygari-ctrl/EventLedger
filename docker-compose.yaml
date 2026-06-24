@@ -1,0 +1,162 @@
+version: '3.9'
+
+services:
+  # ==================== Account Service ====================
+  account-service:
+    build:
+      context: ./account-service
+      dockerfile: Dockerfile
+    image: eventledger/account-service:1.0.0
+    container_name: eventledger-account-service
+
+    ports:
+      - "8081:8080"
+
+    expose:
+      - "8080"
+
+    environment:
+      # Spring Profile
+      SPRING_PROFILES_ACTIVE: okta
+
+      # Okta OAuth2 Configuration
+      OKTA_ISSUER_URI: ${OKTA_ISSUER_URI:-https://your-tenant.okta.com}
+      OKTA_CLIENT_ID: ${OKTA_CLIENT_ID}
+      OKTA_CLIENT_SECRET: ${OKTA_CLIENT_SECRET}
+
+      # Server Configuration
+      SERVER_PORT: 8080
+      SERVER_SERVLET_CONTEXT_PATH: /api
+
+      # Database Configuration (H2)
+      SPRING_DATASOURCE_URL: jdbc:h2:mem:accountdb;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+      SPRING_DATASOURCE_DRIVER_CLASS_NAME: org.h2.Driver
+      SPRING_DATASOURCE_USERNAME: sa
+      SPRING_DATASOURCE_PASSWORD:
+      SPRING_JPA_DATABASE_PLATFORM: org.hibernate.dialect.H2Dialect
+      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+      SPRING_JPA_SHOW_SQL: "false"
+      SPRING_H2_CONSOLE_ENABLED: "true"
+
+      # Logging Configuration
+      LOGGING_LEVEL_ROOT: INFO
+      LOGGING_LEVEL_COM_EVENTLEDGER: DEBUG
+      LOGGING_LEVEL_ORG_SPRINGFRAMEWORK_SECURITY: DEBUG
+
+      # Actuator Configuration
+      MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE: health,metrics,prometheus
+      MANAGEMENT_ENDPOINT_HEALTH_SHOW_DETAILS: when-authorized
+      MANAGEMENT_METRICS_EXPORT_PROMETHEUS_ENABLED: "true"
+
+    networks:
+      - eventledger-network
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+    restart: on-failure:3
+
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+  # ==================== Event Gateway ====================
+  event-gateway:
+    build:
+      context: ./event-gateway
+      dockerfile: Dockerfile
+    image: eventledger/event-gateway:1.0.0
+    container_name: eventledger-event-gateway
+
+    ports:
+      - "8000:8080"
+
+    expose:
+      - "8080"
+
+    environment:
+      # Spring Profile
+      SPRING_PROFILES_ACTIVE: oauth2
+
+      # Okta OAuth2 Configuration (Resource Server - for incoming requests)
+      OKTA_ISSUER_URI: ${OKTA_ISSUER_URI:-https://your-tenant.okta.com}
+
+      # Okta OAuth2 Configuration (OAuth2 Client - for calling Account Service)
+      ACCOUNT_SERVICE_CLIENT_ID: ${ACCOUNT_SERVICE_CLIENT_ID}
+      ACCOUNT_SERVICE_CLIENT_SECRET: ${ACCOUNT_SERVICE_CLIENT_SECRET}
+
+      # Server Configuration
+      SERVER_PORT: 8080
+      SERVER_SERVLET_CONTEXT_PATH: /
+
+      # Account Service Configuration
+      ACCOUNT_SERVICE_URL: http://account-service:8080/api
+
+      # Database Configuration (H2)
+      SPRING_DATASOURCE_URL: jdbc:h2:mem:gatewaydb;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+      SPRING_DATASOURCE_DRIVER_CLASS_NAME: org.h2.Driver
+      SPRING_DATASOURCE_USERNAME: sa
+      SPRING_DATASOURCE_PASSWORD:
+      SPRING_JPA_DATABASE_PLATFORM: org.hibernate.dialect.H2Dialect
+      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+      SPRING_JPA_SHOW_SQL: "false"
+      SPRING_H2_CONSOLE_ENABLED: "true"
+
+      # Logging Configuration
+      LOGGING_LEVEL_ROOT: INFO
+      LOGGING_LEVEL_COM_EVENTLEDGER: DEBUG
+      LOGGING_LEVEL_ORG_SPRINGFRAMEWORK_SECURITY_OAUTH2: DEBUG
+
+      # Actuator Configuration
+      MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE: health,metrics,prometheus
+      MANAGEMENT_ENDPOINT_HEALTH_SHOW_DETAILS: when-authorized
+      MANAGEMENT_METRICS_EXPORT_PROMETHEUS_ENABLED: "true"
+
+      # Resilience4j Configuration
+      RESILIENCE4J_CIRCUITBREAKER_INSTANCES_ACCOUNTSERVICE_SLIDINGWINDOWSIZE: "10"
+      RESILIENCE4J_CIRCUITBREAKER_INSTANCES_ACCOUNTSERVICE_MINIMUMNUMBEROFCALLS: "5"
+      RESILIENCE4J_CIRCUITBREAKER_INSTANCES_ACCOUNTSERVICE_FAILURERATETHRESHOLD: "50"
+      RESILIENCE4J_CIRCUITBREAKER_INSTANCES_ACCOUNTSERVICE_REGISTERINDICATOR: "true"
+      RESILIENCE4J_RETRY_INSTANCES_ACCOUNTSERVICE_MAXATTEMPTS: "3"
+      RESILIENCE4J_RETRY_INSTANCES_ACCOUNTSERVICE_WAITDURATION: "1000"
+      RESILIENCE4J_TIMELIMITER_INSTANCES_ACCOUNTSERVICE_TIMEOUTDURATION: "10s"
+
+    networks:
+      - eventledger-network
+
+    depends_on:
+      account-service:
+        condition: service_healthy
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+    restart: on-failure:3
+
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+# ==================== Networks ====================
+networks:
+  eventledger-network:
+    driver: bridge
+    name: eventledger-network
