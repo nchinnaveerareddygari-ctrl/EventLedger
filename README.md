@@ -1,68 +1,53 @@
 # Event Ledger System
 
-A distributed microservices system for processing financial transaction events with strict idempotency guarantees, out-of-order tolerance, and comprehensive observability.
+A production-ready distributed microservices system for processing financial transaction events with strict idempotency guarantees, out-of-order tolerance, and comprehensive observability.
+
+**Table of Contents:**
+- [Overview](#overview)
+- [Architecture](#architecture)
+- [Features](#features)
+- [System Components](#system-components)
+- [Technology Stack](#technology-stack)
+- [Security](#security)
+- [API Documentation](#api-documentation)
+- [Getting Started](#getting-started)
+- [Docker Setup](#docker-setup)
+- [Development](#development)
+- [Testing](#testing)
+- [Monitoring & Observability](#monitoring--observability)
+- [Production Deployment](#production-deployment)
+- [Troubleshooting](#troubleshooting)
+- [Contributing](#contributing)
+
+---
 
 ## Overview
 
-The Event Ledger system handles financial transaction events from multiple upstream systems that may arrive:
-- **Out of order** — events with earlier timestamps arriving after later ones
-- **Duplicated** — the same event sent multiple times
+The Event Ledger system is designed to reliably process financial transaction events from multiple upstream systems that may have network issues causing:
 
-The system ensures correctness despite these challenges while maintaining high availability and operational visibility.
+- **Out-of-order events** — transactions with earlier timestamps arriving after later ones
+- **Duplicate events** — the same event sent multiple times due to retries
+- **Partial failures** — some events succeeding while others fail
 
+The system ensures:
+- ✅ **Idempotency** - Same event processed only once regardless of retries
+- ✅ **Correctness** - Out-of-order events applied correctly to account balances
+- ✅ **High Availability** - Resilience patterns prevent cascading failures
+- ✅ **Observability** - Complete distributed tracing and metrics collection
+- ✅ **Security** - OAuth2-based authentication and authorization
 
-### Microservices
+### Key Guarantees
 
-#### Event Gateway API (Port 8000)
-The public-facing entry point for all client requests.
+| Guarantee | Implementation |
+|-----------|-----------------|
+| **Idempotency** | Event ID deduplication before processing |
+| **Correctness** | Events reordered chronologically before balance calculation |
+| **Resilience** | Circuit breaker, retry, and timeout patterns |
+| **Traceability** | Distributed trace IDs across service boundaries |
+| **Security** | OAuth2 Bearer tokens with scope-based access control |
 
-**Responsibilities:**
-- Receives and validates transaction events
-- Enforces idempotency using event IDs
-- Stores event records in local database
-- Calls Account Service to apply transactions
-- Implements circuit breaker for resilience
-- Propagates trace IDs for distributed tracing
+---
 
-**Endpoints:**
-| Method | Endpoint | Description |
-|---|---|---|
-| `POST` | `/events` | Submit a transaction event |
-| `GET` | `/events/{id}` | Retrieve a single event by ID |
-| `GET` | `/events?account={accountId}` | List events for an account (ordered by eventTimestamp) |
-| `GET` | `/health` | Health check with diagnostics |
+## Architecture
 
-#### Account Service (Port 8001)
-Internal-only service managing account state and balances.
-
-**Responsibilities:**
-- Manages account balances
-- Applies transactions to accounts
-- Maintains transaction history
-- Provides balance queries
-
-**Endpoints:**
-| Method | Endpoint | Description |
-|---|---|---|
-| `POST` | `/accounts/{accountId}/transactions` | Apply a transaction to an account |
-| `GET` | `/accounts/{accountId}/balance` | Get current balance for an account |
-| `GET` | `/accounts/{accountId}` | Get account details and recent transactions |
-| `GET` | `/health` | Health check with diagnostics |
-
-## Event Payload
-
-Submitted to `POST /events` on the Gateway:
-
-```json
-{
-  "eventId": "evt-001",
-  "accountId": "acct-123",
-  "type": "CREDIT",
-  "amount": 150.00,
-  "currency": "USD",
-  "eventTimestamp": "2026-05-15T14:02:11Z",
-  "metadata": {
-    "source": "mainframe-batch",
-    "batchId": "B-9042"
-  }
-}
+### High-Level System Architecture
