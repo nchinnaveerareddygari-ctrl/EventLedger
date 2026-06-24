@@ -52,3 +52,9 @@ account-service:
   timeout-ms: 5000
   retry-attempts: 3
   retry-delay-ms: 1000
+
+security:
+  oauth2:
+    resourceserver:
+      jwt:
+        issuer-uri: https://accounts.google.com
