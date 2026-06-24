@@ -71,7 +71,16 @@ public class AccountService implements IAccountService {
             throw new AccountNotFoundException(accountId);
         }
 
-        // Step 4: Create transaction entity
+        // Step 4: Detect out-of-order event
+        boolean isOutOfOrder = isOutOfOrderEvent(account, transactionRequest.getEventTimestamp());
+        if (isOutOfOrder) {
+            log.warn("[{}] Out-of-order event detected - eventId: {}, eventTimestamp: {}, lastEventTimestamp: {}",
+                    traceId, transactionRequest.getEventId(), transactionRequest.getEventTimestamp(),
+                    account.getLastEventTimestamp());
+        }
+
+        // Step 5: Create transaction entity
+        String status = isOutOfOrder ? "OUT_OF_ORDER" : "APPLIED";
         Transaction transaction = Transaction.builder()
                 .id(UUID.randomUUID().toString())
                 .eventId(transactionRequest.getEventId())
@@ -81,19 +90,22 @@ public class AccountService implements IAccountService {
                 .currency(transactionRequest.getCurrency().toUpperCase())
                 .eventTimestamp(transactionRequest.getEventTimestamp())
                 .createdAt(LocalDateTime.now())
-                .status("APPLIED")
+                .status(status)
                 .metadata(serializeMetadata(transactionRequest.getMetadata()))
                 .build();
 
-        // Step 5: Add and save transaction
+        // Step 6: Add and save transaction
         transactionRepository.save(transaction);
-        log.debug("[{}] Transaction saved to database - transactionId: {}", traceId, transaction.getId());
+        log.debug("[{}] Transaction saved to database - transactionId: {}, status: {}", traceId, transaction.getId(), status);
 
-        // Step 6: Update account balance
+        // Step 7: Update account balance (recalculates from all transactions in chronological order)
         updateAccountBalance(accountId, traceId);
 
-        log.info("[{}] Transaction successfully applied - transactionId: {}",
-                traceId, transaction.getId());
+        // Step 8: Update last event timestamp (track the latest event timestamp seen)
+        updateLastEventTimestamp(account, transactionRequest.getEventTimestamp());
+
+        log.info("[{}] Transaction successfully applied - transactionId: {}, outOfOrder: {}",
+                traceId, transaction.getId(), isOutOfOrder);
 
         return mapToResponse(transaction);
     }
@@ -167,11 +179,35 @@ public class AccountService implements IAccountService {
                 .balance(0.0)
                 .currency("USD")
                 .transactionCount(0)
+                .lastEventTimestamp(null)
                 .createdAt(LocalDateTime.now())
                 .updatedAt(LocalDateTime.now())
                 .build();
 
         return accountRepository.save(account);
+    }
+
+    /**
+     * Detect if an incoming event is out of order.
+     * An event is out-of-order if its eventTimestamp is before the last processed event's timestamp.
+     */
+    private boolean isOutOfOrderEvent(Account account, LocalDateTime eventTimestamp) {
+        if (account.getLastEventTimestamp() == null) {
+            return false;
+        }
+        return eventTimestamp.isBefore(account.getLastEventTimestamp());
+    }
+
+    /**
+     * Update the last event timestamp on the account to track the most recent event seen.
+     * Only updates if the new timestamp is after the current last event timestamp.
+     */
+    private void updateLastEventTimestamp(Account account, LocalDateTime eventTimestamp) {
+        if (account.getLastEventTimestamp() == null || eventTimestamp.isAfter(account.getLastEventTimestamp())) {
+            account.setLastEventTimestamp(eventTimestamp);
+            accountRepository.save(account);
+            log.debug("Updated lastEventTimestamp for account {} to {}", account.getAccountId(), eventTimestamp);
+        }
     }
 
     /**
