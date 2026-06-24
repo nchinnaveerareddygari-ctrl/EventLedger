@@ -30,6 +30,9 @@ public class Account {
     @Column(name = "transaction_count")
     private Integer transactionCount;
 
+    @Column(name = "last_event_timestamp")
+    private LocalDateTime lastEventTimestamp;
+
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 
