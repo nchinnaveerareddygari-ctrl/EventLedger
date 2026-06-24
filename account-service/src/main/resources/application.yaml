@@ -137,3 +137,28 @@ springdoc:
     enabled: true
     operationsSorter: method
     tagsSorter: alpha
+
+security:
+  oauth2:
+    resourceserver:
+      jwt:
+        # JWT validation URI from your OAuth2 provider
+        jwk-set-uri: ${OAUTH2_JWK_SET_URI:https://your-auth-server/.well-known/jwks.json}
+        # Token issuer validation
+        issuer-uri: ${OAUTH2_ISSUER_URI:https://your-auth-server}
+
+# Data configuration for audit
+data:
+  auditing:
+    enabled: true
+    auto-configuration: true
+# CORS Configuration (can be overridden)
+cors:
+  allowed-origins:
+    - http://localhost:3000
+    - http://localhost:8080
+    - https://yourdomain.com
+  allowed-methods: GET,POST,PUT,PATCH,DELETE,OPTIONS
+  allowed-headers: Content-Type,Authorization,X-Trace-ID,X-Request-ID
+  exposed-headers: X-Trace-ID,X-Request-ID,Content-Type
+  max-age: 3600
