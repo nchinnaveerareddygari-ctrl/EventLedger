@@ -68,6 +68,8 @@ management:
       enabled: true
     diskspace:
       enabled: true
+    circuitbreakers:
+      enabled: true
   metrics:
     enable:
       jvm: true
@@ -95,6 +97,36 @@ logging:
     name: logs/account-service.log
     max-size: 10MB
     max-history: 30
+resilience4j:
+  circuitbreaker:
+    instances:
+      accountDependency:
+        registerHealthIndicator: true
+        slidingWindowType: COUNT_BASED
+        slidingWindowSize: 10
+        minimumNumberOfCalls: 5
+        failureRateThreshold: 50
+        waitDurationInOpenState: 20s
+        permittedNumberOfCallsInHalfOpenState: 3
+        automaticTransitionFromOpenToHalfOpenEnabled: true
+        recordExceptions:
+          - java.io.IOException
+          - java.util.concurrent.TimeoutException
+          - org.springframework.web.client.HttpServerErrorException
+          - org.springframework.web.client.ResourceAccessException
+
+  bulkhead:
+    instances:
+      accountDependency:
+        maxConcurrentCalls: 10
+        maxWaitDuration: 100ms
+
+  timelimiter:
+    instances:
+      accountDependency:
+        timeoutDuration: 2s
+        cancelRunningFuture: true
+
 
 # Springdoc OpenAPI
 springdoc:
