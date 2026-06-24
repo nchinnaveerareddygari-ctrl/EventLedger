@@ -1,0 +1,518 @@
+openapi: 3.0.3
+info:
+  title: Event Gateway API
+  description: |
+    Distributed Financial Transaction Processing System - Event Gateway
+    
+    The public-facing entry point for submitting and querying financial transaction events. 
+    This service handles event ingestion, idempotency enforcement, validation, and orchestration 
+    with the Account Service.
+    
+    ## Key Features
+    - **Idempotency**: Duplicate events are detected and return original event
+    - **Out-of-order Tolerance**: Events are stored and can be queried in chronological order
+    - **Validation**: Comprehensive input validation with meaningful error messages
+    - **Distributed Tracing**: Trace ID propagation across services via X-Trace-ID header
+    - **Resiliency**: Circuit breaker, retry with exponential backoff, and timeout enforcement
+  version: 1.0.0
+  contact:
+    name: Event Ledger Team
+    url: https://github.com/nchinnaveerareddygari-ctrl/EventLedger
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: http://localhost:8080/api
+    description: Development server
+  - url: http://localhost:8080
+    description: Root URL
+
+tags:
+  - name: Events
+    description: Financial transaction event endpoints
+  - name: Health
+    description: Service health check endpoints
+
+paths:
+  /events:
+    post:
+      tags:
+        - Events
+      summary: Submit a transaction event
+      description: |
+        Creates a new transaction event. 
+        
+        **Idempotency**: Submitting the same `eventId` multiple times will return the original event 
+        with HTTP 409 Conflict instead of creating duplicates.
+        
+        **Out-of-order Tolerance**: Events may arrive in any order. The system handles this correctly 
+        and maintains accurate balances regardless of arrival order.
+        
+        **Validation**: All required fields must be provided and valid:
+        - `eventId`: Must be a non-empty string
+        - `accountId`: Must be a non-empty string
+        - `type`: Must be "CREDIT" or "DEBIT"
+        - `amount`: Must be a positive number (> 0)
+        - `currency`: Must be a 3-character code (e.g., "USD")
+        - `eventTimestamp`: Must be a valid ISO 8601 timestamp
+      operationId: submitEvent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EventRequest'
+            examples:
+              creditExample:
+                summary: Credit transaction
+                value:
+                  eventId: evt-001
+                  accountId: acct-123
+                  type: CREDIT
+                  amount: 150.00
+                  currency: USD
+                  eventTimestamp: "2026-05-15T14:02:11Z"
+                  metadata:
+                    source: mainframe-batch
+                    batchId: B-9042
+              debitExample:
+                summary: Debit transaction
+                value:
+                  eventId: evt-002
+                  accountId: acct-456
+                  type: DEBIT
+                  amount: 75.50
+                  currency: USD
+                  eventTimestamp: "2026-05-15T14:03:22Z"
+      responses:
+        '201':
+          description: Event created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventResponse'
+              example:
+                id: 1
+                eventId: evt-001
+                accountId: acct-123
+                type: CREDIT
+                amount: 150.00
+                currency: USD
+                eventTimestamp: "2026-05-15T14:02:11Z"
+                metadata:
+                  source: mainframe-batch
+                  batchId: B-9042
+                status: PROCESSED
+                createdAt: "2026-06-24T10:30:00"
+                traceId: trace-a1b2c3d4
+        '400':
+          description: Validation error - request is malformed or contains invalid data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                missingField:
+                  summary: Missing required field
+                  value:
+                    status: 400
+                    message: Validation failed
+                    detail: amount: must not be null
+                    timestamp: "2026-06-24T10:30:00"
+                invalidAmount:
+                  summary: Invalid amount
+                  value:
+                    status: 400
+                    message: Validation failed
+                    detail: amount: amount must be greater than 0
+                    timestamp: "2026-06-24T10:30:00"
+                invalidType:
+                  summary: Invalid transaction type
+                  value:
+                    status: 400
+                    message: Validation failed
+                    detail: Invalid transaction type: TRANSFER
+                    timestamp: "2026-06-24T10:30:00"
+        '409':
+          description: Duplicate event - idempotent response. This event already exists.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventResponse'
+              example:
+                id: 1
+                eventId: evt-001
+                accountId: acct-123
+                type: CREDIT
+                amount: 150.00
+                currency: USD
+                eventTimestamp: "2026-05-15T14:02:11Z"
+                metadata:
+                  source: mainframe-batch
+                  batchId: B-9042
+                status: DUPLICATE
+                createdAt: "2026-06-24T10:30:00"
+                traceId: trace-a1b2c3d4
+        '503':
+          description: Service unavailable - Account Service is temporarily down. The event was stored but not processed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                status: 503
+                message: Account Service is temporarily unavailable
+                detail: Circuit breaker is OPEN
+                timestamp: "2026-06-24T10:30:00"
+                traceId: trace-a1b2c3d4
+
+    get:
+      tags:
+        - Events
+      summary: List events for an account
+      description: |
+        Retrieves all events for a specific account, ordered chronologically by `eventTimestamp`.
+        
+        This endpoint depends only on the Gateway's local database, so it will work even if the 
+        Account Service is unavailable.
+        
+        **Note**: Events are returned in the order they occurred (by `eventTimestamp`), 
+        not necessarily in the order they were received.
+      operationId: listEventsByAccount
+      parameters:
+        - name: account
+          in: query
+          description: Account ID to filter events
+          required: true
+          schema:
+            type: string
+            example: acct-123
+      responses:
+        '200':
+          description: Events retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/EventResponse'
+              example:
+                - id: 1
+                  eventId: evt-001
+                  accountId: acct-123
+                  type: CREDIT
+                  amount: 150.00
+                  currency: USD
+                  eventTimestamp: "2026-05-15T14:00:00Z"
+                  status: PROCESSED
+                  createdAt: "2026-06-24T10:30:00"
+                  traceId: trace-a1b2c3d4
+                - id: 2
+                  eventId: evt-003
+                  accountId: acct-123
+                  type: DEBIT
+                  amount: 50.00
+                  currency: USD
+                  eventTimestamp: "2026-05-15T14:05:00Z"
+                  status: PROCESSED
+                  createdAt: "2026-06-24T10:32:00"
+                  traceId: trace-e5f6g7h8
+        '400':
+          description: Missing or invalid accountId parameter
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                status: 400
+                message: account parameter is required
+                detail: null
+                timestamp: "2026-06-24T10:30:00"
+
+  /events/{id}:
+    get:
+      tags:
+        - Events
+      summary: Get event by ID
+      description: |
+        Retrieves a single event from the Gateway by its database ID.
+        
+        This endpoint depends only on the Gateway's local database, so it will work even if the 
+        Account Service is unavailable.
+      operationId: getEvent
+      parameters:
+        - name: id
+          in: path
+          description: Event database ID
+          required: true
+          schema:
+            type: integer
+            format: int64
+            example: 1
+      responses:
+        '200':
+          description: Event found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventResponse'
+              example:
+                id: 1
+                eventId: evt-001
+                accountId: acct-123
+                type: CREDIT
+                amount: 150.00
+                currency: USD
+                eventTimestamp: "2026-05-15T14:02:11Z"
+                metadata:
+                  source: mainframe-batch
+                  batchId: B-9042
+                status: PROCESSED
+                createdAt: "2026-06-24T10:30:00"
+                traceId: trace-a1b2c3d4
+        '404':
+          description: Event not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                status: 404
+                message: Event not found
+                detail: null
+                timestamp: "2026-06-24T10:30:00"
+
+  /health:
+    get:
+      tags:
+        - Health
+      summary: Health check
+      description: |
+        Returns the health status of the Event Gateway and its dependencies.
+        
+        Checks the status of:
+        - Event Gateway service itself
+        - Local H2 database connectivity
+        - Account Service availability (remote health check)
+      operationId: health
+      responses:
+        '200':
+          description: Health status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+              examples:
+                allHealthy:
+                  summary: All services healthy
+                  value:
+                    status: UP
+                    service: event-gateway
+                    database: CONNECTED
+                    accountService: UP
+                    timestamp: "2026-06-24T10:30:00Z"
+                accountServiceDown:
+                  summary: Account Service unavailable
+                  value:
+                    status: UP
+                    service: event-gateway
+                    database: CONNECTED
+                    accountService: DOWN
+                    timestamp: "2026-06-24T10:30:00Z"
+
+components:
+  schemas:
+    EventRequest:
+      type: object
+      title: Event Request
+      description: Financial transaction event payload to be submitted
+      required:
+        - eventId
+        - accountId
+        - type
+        - amount
+        - currency
+        - eventTimestamp
+      properties:
+        eventId:
+          type: string
+          description: |
+            Unique identifier for the event. 
+            Used for idempotency - submitting the same eventId twice will not create duplicates.
+          example: evt-001
+          minLength: 1
+        accountId:
+          type: string
+          description: The account this event belongs to
+          example: acct-123
+          minLength: 1
+        type:
+          type: string
+          description: Transaction type
+          enum:
+            - CREDIT
+            - DEBIT
+          example: CREDIT
+        amount:
+          type: number
+          format: decimal
+          description: Transaction amount. Must be positive.
+          example: 150.00
+          exclusiveMinimum: 0
+        currency:
+          type: string
+          description: Currency code (ISO 4217)
+          example: USD
+          pattern: '^[A-Z]{3}$'
+          minLength: 3
+          maxLength: 3
+        eventTimestamp:
+          type: string
+          format: date-time
+          description: |
+            When the event originally occurred (ISO 8601 format).
+            Events may arrive out of order; this timestamp determines the logical order.
+          example: "2026-05-15T14:02:11Z"
+        metadata:
+          type: object
+          description: Optional additional context about the transaction
+          example:
+            source: mainframe-batch
+            batchId: B-9042
+          additionalProperties: true
+
+    EventResponse:
+      type: object
+      title: Event Response
+      description: Event data as stored in the Event Gateway
+      properties:
+        id:
+          type: integer
+          format: int64
+          description: Database ID
+          example: 1
+        eventId:
+          type: string
+          description: Unique identifier for the event
+          example: evt-001
+        accountId:
+          type: string
+          description: Account ID
+          example: acct-123
+        type:
+          type: string
+          description: Transaction type
+          enum:
+            - CREDIT
+            - DEBIT
+          example: CREDIT
+        amount:
+          type: number
+          format: decimal
+          description: Transaction amount
+          example: 150.00
+        currency:
+          type: string
+          description: Currency code
+          example: USD
+        eventTimestamp:
+          type: string
+          format: date-time
+          description: When the event originally occurred
+          example: "2026-05-15T14:02:11Z"
+        metadata:
+          type: object
+          description: Optional metadata
+          example:
+            source: mainframe-batch
+            batchId: B-9042
+          additionalProperties: true
+        status:
+          type: string
+          description: |
+            Event processing status:
+            - `PENDING`: Received but not yet processed by Account Service
+            - `PROCESSED`: Successfully processed by Account Service
+            - `FAILED`: Failed to process (Account Service error)
+            - `DUPLICATE`: Duplicate of an existing event
+          enum:
+            - PENDING
+            - PROCESSED
+            - FAILED
+            - DUPLICATE
+          example: PROCESSED
+        createdAt:
+          type: string
+          format: date-time
+          description: When the event was received by the Gateway
+          example: "2026-06-24T10:30:00"
+        traceId:
+          type: string
+          description: Distributed trace ID for tracking requests across services
+          example: trace-a1b2c3d4
+
+    ErrorResponse:
+      type: object
+      title: Error Response
+      description: Error details
+      properties:
+        status:
+          type: integer
+          description: HTTP status code
+          example: 400
+        message:
+          type: string
+          description: Error message
+          example: Validation failed
+        detail:
+          type: string
+          description: Detailed error description
+          example: "amount: amount must be greater than 0"
+          nullable: true
+        timestamp:
+          type: string
+          format: date-time
+          description: When the error occurred
+          example: "2026-06-24T10:30:00"
+        traceId:
+          type: string
+          description: Trace ID for debugging (if available)
+          example: trace-a1b2c3d4
+          nullable: true
+
+    HealthResponse:
+      type: object
+      title: Health Response
+      description: Service health status
+      properties:
+        status:
+          type: string
+          description: Overall service status
+          enum:
+            - UP
+            - DOWN
+          example: UP
+        service:
+          type: string
+          description: Service name
+          example: event-gateway
+        database:
+          type: string
+          description: Database connection status
+          enum:
+            - CONNECTED
+            - DISCONNECTED
+          example: CONNECTED
+        accountService:
+          type: string
+          description: Account Service availability
+          enum:
+            - UP
+            - DOWN
+          example: UP
+        timestamp:
+          type: string
+          format: date-time
+          description: Health check timestamp
+          example: "2026-06-24T10:30:00Z"
